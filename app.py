@@ -1,4 +1,4 @@
-import json, random, re, threading
+import json, os, random, re, threading
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -6,8 +6,8 @@ from pathlib import Path
 import requests
 import streamlit as st
 
-MODEL = "qwen2.5:3b"  
-OLLAMA = "http://localhost:11434"
+MODEL = os.environ.get("MODEL", "qwen2.5:3b")  
+OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 PROFILE_FILE, LOG_FILE, SETTINGS_FILE = Path("profile.json"), Path("log.json"), Path("settings.json")
 
 PLACES = ["room", "study", "common", "outside", "commute"]
@@ -21,6 +21,7 @@ ALL_C = ("alone", "friends", "family")
 NOSTUDY = ["room", "common", "outside", "commute"]
 HOME = ["room", "common", "outside"]
 
+# Sample profile. The model may only name people, places and titles listed here.
 DEFAULT_PROFILE = {
     "name": "Sam",
     "goals": ["fitness", "reading", "creative", "social", "learning", "music"],
@@ -49,6 +50,8 @@ def mk(id, text, cat, lo, hi, moods=None, places=PLACES, company=ALL_C, hours=(0
        cost=False, loud=False, intense=False, heavy=False, gear=(), need=(), interest=(), goals=(), tags=(), w=1.0):
     return dict(locals())
 
+
+# lo/hi = minutes of free time where it makes sense. Hard rules live here, not in the prompt.
 STATIC = [
     mk("stretch", "Stand up and stretch your neck, shoulders and back", "move", 3, 15),
     mk("walk_in", "Walk around your floor or corridor for 5 minutes, phone away", "move", 5, 20, places=["room", "study", "common"]),
@@ -153,9 +156,9 @@ def weight(a, c, p, log):
     if set(a["goals"]) & set(p.get("goals", [])):
         w *= 1.5
     if a["interest"]:
-        w *= 1.5 
+        w *= 1.5  # matches a stated interest
     done = sum(1 for e in log if e["event"] == "done" and e["cat"] == a["cat"] and now - datetime.fromisoformat(e["time"]) < timedelta(days=7))
-    w /= 1 + done 
+    w /= 1 + done  # gently balance categories over the week
     for e in log[-30:]:
         if e["id"] == a["id"]:
             age = now - datetime.fromisoformat(e["time"])
@@ -219,7 +222,7 @@ def ask(p, c, cands):
         raise
     except Exception:
         pass
-    return a, a["text"] + ".", "Start now, phone face down." 
+    return a, a["text"] + ".", "Start now, phone face down."  # instant, AI-free fallback
 
 
 @st.cache_resource
@@ -277,14 +280,15 @@ def read_ctx():
 
 def suggest():
     c = S.ctx
+    cands = candidates(c, profile, S.seen)
+    S.err = None
     try:
         with st.spinner("Picking something for you..."):
-            a, msg, step = ask(profile, c, candidates(c, profile, S.seen))
+            a, msg, step = ask(profile, c, cands)
     except requests.exceptions.ConnectionError:
-        S.cur = None
-        S.err = "Can't reach Ollama. Open the Ollama app (or run `ollama serve`) and try again."
-        return
-    S.err = None
+        a = cands[0]
+        msg, step = a["text"] + ".", "Start now, phone face down."
+        S.err = "No local AI model found, so this is the plain rule-based suggestion. Run the app locally with Ollama for the friendly wording."
     S.seen.add(a["id"]); S.cur = (a, msg, step); S.doing = False
     log_event("shown", a)
 
@@ -292,7 +296,7 @@ def suggest():
 def on_get():
     S.ctx = read_ctx(); S.seen = set()
     vals = {k: (DEFAULTS[k] if S.get(k) is None else S.get(k)) for k in DEFAULTS}
-    SETTINGS_FILE.write_text(json.dumps(vals), encoding="utf-8") 
+    SETTINGS_FILE.write_text(json.dumps(vals), encoding="utf-8")  # remembered for next time
     suggest()
 
 
@@ -350,7 +354,7 @@ with st.expander("More options"):
 
 st.button("✨ What should I do?", type="primary", use_container_width=True, on_click=on_get)
 if S.get("err"):
-    st.error(S.err)
+    st.info(S.err)
 if S.pop("celebrate", False):
     st.balloons(); st.success("Logged. Nice work.")
 
