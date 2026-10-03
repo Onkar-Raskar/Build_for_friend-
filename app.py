@@ -6,7 +6,7 @@ from pathlib import Path
 import requests
 import streamlit as st
 
-MODEL = "qwen2.5:7b"  
+MODEL = "qwen2.5:3b"  
 OLLAMA = "http://localhost:11434"
 PROFILE_FILE, LOG_FILE, SETTINGS_FILE = Path("profile.json"), Path("log.json"), Path("settings.json")
 
